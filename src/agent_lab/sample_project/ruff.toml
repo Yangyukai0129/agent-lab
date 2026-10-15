@@ -1,0 +1,5 @@
+line-length = 88
+
+[lint]
+# E: pycodestyle 錯誤（含行過長）, F: 未使用的 import／變數, I: import 排序
+select = ["E", "F", "I"]
