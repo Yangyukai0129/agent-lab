@@ -1,5 +1,6 @@
 import os
 import subprocess
+import difflib
 
 from agent_lab.config import API_KEY_ENV_VAR, PROJECT_DIR
 from agent_lab.stage1_single_agent.config import (
@@ -8,9 +9,13 @@ from agent_lab.stage1_single_agent.config import (
 )
 from agent_lab.stage1_single_agent.permissions import (
     CommandNotAllowedError,
+    ContentNotAllowedError,
     PathNotAllowedError,
     resolve_safe_path,
     validate_command,
+    check_write_allowed,
+    confirm_write,
+    check_no_new_suppression,
 )
 
 # list_dir 不列出這些自動產生的資料夾，避免干擾模型
@@ -66,11 +71,49 @@ def run_command(command: list) -> str:
     return _truncate(f"[exit code {proc.returncode}]\n{output}")
 
 
+def write_file(path: str, content: str) -> str:
+    """用 content 完整取代既有 .py 檔案；先顯示 diff，經使用者輸入 y 才寫入。"""
+    target = check_write_allowed(path)  # 不合規直接丟錯，不會打擾使用者
+
+    with open(target, encoding="utf-8", newline="") as f:
+        old_raw = f.read()
+    newline = "\r\n" if "\r\n" in old_raw else "\n"  # 保留原本換行，diff 才不會整份都變
+    old_lines = old_raw.replace("\r\n", "\n").split("\n")
+    new_lines = content.replace("\r\n", "\n").split("\n")
+
+    if old_raw.endswith("\n") and new_lines[-1] != "":
+        new_lines.append("")  # 原檔以換行結尾，就保證新內容也是
+
+    check_no_new_suppression(old_raw, content)
+
+    if old_lines == new_lines:
+        return "內容沒有變動，未寫入。"
+
+    diff = list(
+        difflib.unified_diff(
+            old_lines, new_lines, f"a/{path}", f"b/{path}", lineterm=""
+        )
+    )
+    added = sum(1 for d in diff if d.startswith("+") and not d.startswith("+++"))
+    removed = sum(1 for d in diff if d.startswith("-") and not d.startswith("---"))
+
+    if not confirm_write(path, "\n".join(diff)):
+        return (
+            "使用者拒絕了這次修改（原因未知），檔案沒有變動。"
+            "不要用 noqa 等方式繞過檢查；請改成範圍較小的修改，或停下來向使用者說明。"
+        )
+
+    with open(target, "w", encoding="utf-8", newline="") as f:
+        f.write(newline.join(new_lines))
+    return f"已寫入 {path}（+{added}/-{removed} 行）。請重新執行 ruff check 與 pytest 驗證。"
+
+
 # 工具名稱 -> 實際函式
 TOOL_FUNCTIONS = {
     "read_file": read_file,
     "list_dir": list_dir,
     "run_command": run_command,
+    "write_file": write_file,
 }
 
 # 給模型看的工具描述（OpenAI 相容格式，OpenRouter 使用此格式）
@@ -116,7 +159,7 @@ TOOL_DEFINITIONS = [
             "description": (
                 "在專案目錄內執行白名單內的指令，回傳 exit code 與輸出，"
                 "exit code 為 0 代表成功。目前只允許 ruff check 與 pytest，"
-                "且不能使用會修改檔案的選項（例如 --fix）。"
+                "且不能使用會修改檔案的選項（例如 --fix）；要改檔請用 write_file。"
                 "指令以字串陣列表示，不會經過 shell。"
             ),
             "parameters": {
@@ -135,6 +178,26 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": (
+                "用你提供的完整內容取代專案內一個既有的 .py 檔案。"
+                "content 必須是修改後的「整個檔案」，不能省略沒改的部分。"
+                "每次寫入都會先給使用者看 diff，使用者可能拒絕。"
+                "不能修改 tests/、conftest.py、ruff.toml、pytest.ini，也不能新增檔案。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "相對於專案根目錄的 .py 檔案路徑"},
+                    "content": {"type": "string", "description": "修改後的完整檔案內容"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
 ]
 
 
@@ -145,7 +208,7 @@ def run_tool(name: str, arguments: dict) -> str:
         return f"錯誤：沒有名為 '{name}' 的工具。可用工具：{', '.join(TOOL_FUNCTIONS)}"
     try:
         return func(**arguments)
-    except (PathNotAllowedError, CommandNotAllowedError) as e:
+    except (PathNotAllowedError, CommandNotAllowedError, ContentNotAllowedError) as e:
         return f"錯誤：{e}"
     except FileNotFoundError:
         return f"錯誤：找不到 '{arguments.get('path')}'。"
@@ -158,3 +221,4 @@ def run_tool(name: str, arguments: dict) -> str:
         return f"錯誤：作業系統層級的失敗（{type(e).__name__}）。"
     except TypeError as e:
         return f"錯誤：工具參數不正確：{e}"
+    

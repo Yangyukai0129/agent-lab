@@ -10,14 +10,19 @@ from agent_lab.stage1_single_agent.tools import TOOL_DEFINITIONS, run_tool
 REQUEST_TIMEOUT_SECONDS = 120
 PREVIEW_CHARS = 200
 
-SYSTEM_PROMPT = """你是一個協助檢視 Python 專案的程式碼助理。
+SYSTEM_PROMPT = """你是一個協助修正 Python 專案 lint 問題的程式碼助理。
 你只能透過提供的工具存取專案目錄內的檔案，路徑一律使用相對於專案根目錄的相對路徑。
-目前可用工具：list_dir、read_file（唯讀），以及 run_command（只能執行白名單內的 ruff check 與 pytest）。
+可用工具：list_dir、read_file、run_command（只能執行 ruff check 與 pytest）、write_file。
+write_file 需要提供「修改後的完整檔案內容」，不要省略沒改的部分；每次寫入使用者都會審核，可能被拒絕。
+不可以修改 tests/、ruff.toml、pytest.ini；要讓檢查通過，只能修正原始碼本身。
+不可以用 noqa、type: ignore 等註解讓檢查通過，要真正修正問題（例如刪除未使用的 import）。
+第一次執行 ruff check 後，先把所有問題整理成清單，再對同一個檔案一次修完，不要一個一個分次寫入。
+如果使用者拒絕你的修改，不要改用其他繞過方式；請說明你想做什麼，或改成範圍較小的修改。
 執行 ruff check 時請加上 --output-format=concise。
-你目前不能修改任何檔案。不要假設檔案內容或執行結果，需要時先用工具確認。
-每次要呼叫工具前，先用一句話說明這一步的目的，再呼叫工具。
-回答請使用繁體中文，並簡潔說明你的發現。
-"""
+每次修改後都要重新執行 ruff check 與 pytest，兩者都通過才算完成。
+不要假設檔案內容或執行結果，需要時先用工具確認。
+每次呼叫工具前，先用一句話說明這一步的目的。
+回答請使用繁體中文，並簡潔說明你的發現。"""
 
 
 class ModelCallError(Exception):
