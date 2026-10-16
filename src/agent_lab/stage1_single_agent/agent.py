@@ -38,7 +38,7 @@ def _error_message(obj) -> str:
     return str(err) if err else "（沒有錯誤訊息）"
 
 
-def call_model(messages: list[dict]) -> dict:
+def call_model(messages: list[dict], tools: list[dict] | None = None) -> dict:
     """送出一次請求，回傳解析後的回應；任何失敗都轉成 ModelCallError。"""
     if not MODEL:
         raise ModelCallError(
@@ -53,7 +53,11 @@ def call_model(messages: list[dict]) -> dict:
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
-            json={"model": MODEL, "messages": messages, "tools": TOOL_DEFINITIONS},
+            json={
+                "model": MODEL,
+                "messages": messages,
+                "tools": TOOL_DEFINITIONS if tools is None else tools,
+            },
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except requests.RequestException as e:
