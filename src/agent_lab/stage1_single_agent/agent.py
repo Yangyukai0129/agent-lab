@@ -6,6 +6,7 @@ import requests
 from agent_lab.config import MODEL, OPENROUTER_BASE_URL, get_api_key
 from agent_lab.stage1_single_agent.config import MAX_TURNS
 from agent_lab.stage1_single_agent.tools import TOOL_DEFINITIONS, run_tool
+from agent_lab.stage1_single_agent.logger import RunLogger
 
 REQUEST_TIMEOUT_SECONDS = 120
 PREVIEW_CHARS = 200
@@ -82,7 +83,7 @@ def _preview(text, limit: int = PREVIEW_CHARS) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def _execute_tool_call(call: dict) -> str:
+def _execute_tool_call(call: dict, logger: RunLogger, turn: int) -> str:
     """解析一個工具請求並執行；任何問題都回傳錯誤字串給模型，不丟例外。"""
     func = call.get("function") or {}
     name = func.get("name", "")
@@ -90,13 +91,20 @@ def _execute_tool_call(call: dict) -> str:
         arguments = json.loads(func.get("arguments") or "{}")
     except json.JSONDecodeError:
         print(f"  模型要求：{name}（參數不是合法 JSON）")
-        return "錯誤：工具參數不是合法的 JSON，請重新呼叫並提供正確格式。"
+        result = "錯誤：工具參數不是合法的 JSON，請重新呼叫並提供正確格式。"
+        logger.log("tool_result", turn=turn, name=name,
+                   arguments=func.get("arguments"), result=result)
+        return result
     if not isinstance(arguments, dict):
-        return "錯誤：工具參數必須是 JSON 物件。"
+        result = "錯誤：工具參數必須是 JSON 物件。"
+        logger.log("tool_result", turn=turn, name=name,
+                   arguments=func.get("arguments"), result=result)
+        return result
 
     print(f"  模型要求：{name}({_preview(json.dumps(arguments, ensure_ascii=False))})")
     result = run_tool(name, arguments)
     print(f"  結果：{_preview(result)}")
+    logger.log("tool_result", turn=turn, name=name, arguments=arguments, result=result)
     return result
 
 
@@ -110,36 +118,69 @@ def _print_usage(turn: int, response: dict, message_count: int) -> None:
 
 
 def run_agent(task: str) -> str:
+    logger = RunLogger()
+    if logger.path:
+        print(f"日誌：{logger.path}")
+    logger.log("run_start", task=task, model=MODEL, max_turns=MAX_TURNS)
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": task},
     ]
+    totals = {"prompt": 0, "completion": 0, "total": 0}
+    reason, error, turns = "error", None, 0
 
-    for turn in range(1, MAX_TURNS + 1):
-        response = call_model(messages)
-        message = response["choices"][0]["message"]
-        messages.append(message)  # 先把模型這則訊息放進歷史，模型才記得自己做過什麼
-        _print_usage(turn, response, len(messages))
+    try:
+        for turn in range(1, MAX_TURNS + 1):
+            turns = turn
+            response = call_model(messages)
+            message = response["choices"][0]["message"]
+            messages.append(message)
+            _print_usage(turn, response, len(messages))
 
-        if message.get("content"):
-            print(f"  模型說：{_preview(message['content'])}")
-
-        tool_calls = message.get("tool_calls")
-        if not tool_calls:
-            return message.get("content") or ""  # 沒有工具請求 = 模型認為完成
-
-        for call in tool_calls:
-            result = _execute_tool_call(call)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.get("id"),
-                    "name": call.get("function", {}).get("name", ""),
-                    "content": result,
-                }
+            usage = response.get("usage") or {}
+            used = {
+                "prompt": usage.get("prompt_tokens") or 0,
+                "completion": usage.get("completion_tokens") or 0,
+                "total": usage.get("total_tokens") or 0,
+            }
+            for k in totals:
+                totals[k] += used[k]
+            logger.log(
+                "model_response",
+                turn=turn,
+                usage=used,
+                message_count=len(messages),
+                content=message.get("content"),
+                tool_calls=message.get("tool_calls"),
             )
 
-    return f"已達輪數上限（{MAX_TURNS} 輪），停止。"
+            if message.get("content"):
+                print(f"  模型說：{_preview(message['content'])}")
+
+            tool_calls = message.get("tool_calls")
+            if not tool_calls:
+                reason = "finished"
+                return message.get("content") or ""
+
+            for call in tool_calls:
+                result = _execute_tool_call(call, logger, turn)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.get("id"),
+                        "name": call.get("function", {}).get("name", ""),
+                        "content": result,
+                    }
+                )
+
+        reason = "max_turns"
+        return f"已達輪數上限（{MAX_TURNS} 輪），停止。"
+    except BaseException as e:  # 包含 Ctrl+C，讓中斷也留下紀錄
+        error = f"{type(e).__name__}: {e}"
+        raise
+    finally:
+        logger.log("run_end", reason=reason, turns=turns, tokens=totals, error=error)
 
 
 def main() -> None:
