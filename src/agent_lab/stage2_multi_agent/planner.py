@@ -13,7 +13,9 @@ from agent_lab.stage2_multi_agent.llm_loop import run_role_loop
 
 
 class PlanError(Exception):
-    """planner 沒有產生合格的計畫時丟出。"""
+    """planner 沒有產生合格的計畫時丟出。tokens 是這次失敗前已花掉的用量。"""
+
+    tokens: dict | None = None
 
 
 PLANNER_PROMPT = """你是 planner，負責為「修正 Python 專案的 ruff 問題」擬定計畫。
@@ -144,7 +146,9 @@ def plan_task(task: str, logger: RunLogger) -> dict:
         logger.log("plan", attempt=attempt, plan=plan)
         return {"plan": plan, "tokens": totals, "attempts": attempt}
 
-    raise PlanError(f"重試 {PLAN_RETRIES} 次後計畫仍然無效：{error}")
+    failure = PlanError(f"重試 {PLAN_RETRIES} 次後計畫仍然無效：{error}")
+    failure.tokens = totals
+    raise failure
 
 
 def main() -> None:

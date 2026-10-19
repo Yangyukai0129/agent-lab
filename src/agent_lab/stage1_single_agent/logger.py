@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 
 from agent_lab.config import API_KEY_ENV_VAR
 from agent_lab.stage1_single_agent.config import LOG_DIR
@@ -9,17 +10,18 @@ from agent_lab.stage1_single_agent.config import LOG_DIR
 class RunLogger:
     """每次執行寫一個 JSONL 檔，一行一個事件。寫入失敗只警告，不中斷 agent。"""
 
-    def __init__(self) -> None:
+    def __init__(self, log_dir: Path | None = None) -> None:
         self.path = None
         self._warned = False
         try:
-            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            directory = log_dir or LOG_DIR
+            directory.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = LOG_DIR / f"run_{stamp}.jsonl"
+            path = directory / f"run_{stamp}.jsonl"
             n = 1
             while path.exists():  # 同一秒內重複執行時避免寫進同一個檔
                 n += 1
-                path = LOG_DIR / f"run_{stamp}_{n}.jsonl"
+                path = directory / f"run_{stamp}_{n}.jsonl"
             self.path = path
         except OSError as e:
             self._warn(f"無法建立日誌資料夾：{e}")

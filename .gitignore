@@ -10,4 +10,5 @@ wheels/
 .venv
 
 src/agent_lab/stage1_single_agent/logs/
+src/agent_lab/stage2_multi_agent/logs/
 .env
