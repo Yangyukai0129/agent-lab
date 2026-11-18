@@ -4,14 +4,14 @@ import sys
 from agent_lab.stage1_single_agent.agent import ModelCallError
 from agent_lab.stage1_single_agent.logger import RunLogger
 from agent_lab.stage1_single_agent.permissions import resolve_safe_path
+from agent_lab.stage1_single_agent.tools import (
+    WRITE_REJECTED,
+    WRITE_UNCHANGED,
+    WRITE_WRITTEN,
+)
 from agent_lab.stage2_multi_agent.config import EXECUTOR_MAX_TURNS
 from agent_lab.stage2_multi_agent.llm_loop import run_role_loop
 from agent_lab.stage2_multi_agent.planner import PlanError, plan_task
-
-# 這三個開頭必須和階段一 tools.write_file 的回傳訊息一致（改一邊要改另一邊）
-WRITTEN_PREFIX = "已寫入"
-REJECTED_PREFIX = "使用者拒絕"
-UNCHANGED_PREFIX = "內容沒有變動"
 
 FEEDBACK_MAX_CHARS = 1500
 
@@ -57,11 +57,11 @@ def _make_hook(counts: dict):
     def hook(name: str, arguments: dict, result: str) -> bool:
         if name != "write_file":
             return False
-        if result.startswith(WRITTEN_PREFIX):
+        if result.startswith(WRITE_WRITTEN):
             counts["written"] += 1
-        elif result.startswith(UNCHANGED_PREFIX):
+        elif result.startswith(WRITE_UNCHANGED):
             counts["unchanged"] += 1
-        elif result.startswith(REJECTED_PREFIX):
+        elif result.startswith(WRITE_REJECTED):
             counts["rejected"] += 1
             return True
         return False

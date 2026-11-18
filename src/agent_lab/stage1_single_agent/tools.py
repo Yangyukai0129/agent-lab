@@ -21,6 +21,11 @@ from agent_lab.stage1_single_agent.permissions import (
 # list_dir 不列出這些自動產生的資料夾，避免干擾模型
 _HIDDEN_NAMES = {"__pycache__", ".pytest_cache", ".ruff_cache"}
 
+# write_file 回傳訊息的開頭；stage2 executor 靠這些判斷寫入結果
+WRITE_WRITTEN = "已寫入"
+WRITE_REJECTED = "使用者拒絕"
+WRITE_UNCHANGED = "內容沒有變動"
+
 
 def _truncate(text: str) -> str:
     """輸出太長就截斷，並明確告訴模型內容被截斷了。"""
@@ -87,7 +92,7 @@ def write_file(path: str, content: str) -> str:
     check_no_new_suppression(old_raw, content)
 
     if old_lines == new_lines:
-        return "內容沒有變動，未寫入。"
+        return f"{WRITE_UNCHANGED}，未寫入。"
 
     diff = list(
         difflib.unified_diff(
@@ -99,13 +104,13 @@ def write_file(path: str, content: str) -> str:
 
     if not confirm_write(path, "\n".join(diff)):
         return (
-            "使用者拒絕了這次修改（原因未知），檔案沒有變動。"
+            f"{WRITE_REJECTED}了這次修改（原因未知），檔案沒有變動。"
             "不要用 noqa 等方式繞過檢查；請改成範圍較小的修改，或停下來向使用者說明。"
         )
 
     with open(target, "w", encoding="utf-8", newline="") as f:
         f.write(newline.join(new_lines))
-    return f"已寫入 {path}（+{added}/-{removed} 行）。請重新執行 ruff check 與 pytest 驗證。"
+    return f"{WRITE_WRITTEN} {path}（+{added}/-{removed} 行）。請重新執行 ruff check 與 pytest 驗證。"
 
 
 # 工具名稱 -> 實際函式
